@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: vault
+  labels:
+    app: vault
+spec:
+  ports:
+    - name: vault
+      port: 8200
+  selector:
+    app: vault
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: vault
+  serviceName: vault
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      containers:
+      - image: hashicorp/vault:1.16.1
+        name: vault
+        ports:
+        - containerPort: 8200
+          name: vaultport
+          protocol: TCP
+        env:
+        - name: VAULT_RAFT_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: VAULT_ADDR
+          value: 'http://127.0.0.1:8200'
+        securityContext:
+         capabilities:
+           add:
+             - IPC_LOCK
+        command:
+          - /bin/sh
+          - -c
+          - |
+            sed "s/{{VAULT_RAFT_NODE_ID}}/${VAULT_RAFT_NODE_ID}/g" /vault/config/vault.hcl > /vault/config/vault_resolved.hcl
+            vault server -config=/vault/config/vault_resolved.hcl
+        volumeMounts:
+        - name: vault-hcl
+          mountPath: /vault/config/vault.hcl
+          subPath: vault.hcl
+          readOnly: false
+        - name: data-dir
+          mountPath: /vault/data
+      volumes:
+      - name: vault-hcl
+        configMap:
+          name: cm-vault
+          items:
+          - key: vault.hcl
+            path: vault.hcl
+  volumeClaimTemplates:
+  - metadata:
+      name: data-dir
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: local-storage
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm-vault
+  namespace: vault
+data:
+  vault.hcl: |
+    storage "raft" {
+      path    = "/vault/data"
+      retry_join {
+         leader_api_addr = "http://vault-0.vault:8200"
+      }
+      retry_join {
+         leader_api_addr = "http://vault-1.vault:8200"
+      }
+      retry_join {
+         leader_api_addr = "http://vault-2.vault:8200"
+      }
+    }
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = "true"
+    }
+    disable_mlock = true
+    api_addr = "http://0.0.0.0:8200"
+    cluster_addr = "http://{{VAULT_RAFT_NODE_ID}}.vault:8201"
+    ui = true
+    cluster_name = "vault-cluster"
