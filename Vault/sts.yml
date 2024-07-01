@@ -35,6 +35,18 @@ spec:
         - containerPort: 8200
           name: vaultport
           protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /v1/sys/health?standbyok=true
+            port: 8200
+          initialDelaySeconds: 90
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+            port: 8200
+          initialDelaySeconds: 5
+          periodSeconds: 10
         env:
         - name: VAULT_RAFT_NODE_ID
           valueFrom:
